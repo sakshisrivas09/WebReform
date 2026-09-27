@@ -17,6 +17,7 @@ import {
   Sparkles,
   CheckCircle2,
   ArrowRight,
+  Zap,
 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type { Website, Page, CrawlJobResponse, OptimizationRun } from "@/types";
@@ -43,6 +44,7 @@ export const WebsiteDetailsPage: React.FC = () => {
   const [maxPages, setMaxPages] = useState<number>(10);
   const [maxDepth, setMaxDepth] = useState<number>(3);
   const [crawling, setCrawling] = useState<boolean>(false);
+  const [deepScanning, setDeepScanning] = useState<boolean>(false);
   const [crawlStatus, setCrawlStatus] = useState<CrawlJobResponse | null>(null);
   const [crawlError, setCrawlError] = useState<string | null>(null);
 
@@ -115,6 +117,66 @@ export const WebsiteDetailsPage: React.FC = () => {
         setCrawling(false);
       }
     }, 1500);
+  };
+
+  const handleFullDeepScanAndReform = () => {
+    requireAccess(async () => {
+      setDeepScanning(true);
+      setCrawlError(null);
+      try {
+        // 1. Deep Crawl up to 50 pages and depth 3
+        const job = await api.startCrawl(websiteId, { maxPages: 50, maxDepth: 3 });
+        setCrawlStatus(job);
+
+        // 2. Poll until crawl completion
+        await new Promise<void>((resolve, reject) => {
+          let attempts = 0;
+          const interval = setInterval(async () => {
+            attempts++;
+            try {
+              const status = await api.getCrawlJob(websiteId, job.jobId);
+              setCrawlStatus(status);
+              if (status.status === "COMPLETED") {
+                clearInterval(interval);
+                resolve();
+              } else if (status.status === "FAILED") {
+                clearInterval(interval);
+                reject(new Error(status.errorMessage || "Website crawl failed."));
+              } else if (attempts > 60) {
+                clearInterval(interval);
+                resolve();
+              }
+            } catch (err) {
+              clearInterval(interval);
+              reject(err);
+            }
+          }, 1200);
+        });
+
+        // 3. Automatically run optimization
+        const run = await api.runOptimization({
+          websiteId,
+          populationSize: 40,
+          iterations: 120,
+          randomSeed: 42,
+          maxDepth: 3,
+          maxChildren: 7,
+          weights: {
+            navigation: 0.40,
+            behavior: 0.30,
+            semantic: 0.15,
+            structural: 0.05,
+            depth: 0.10,
+          },
+        });
+
+        // 4. Show result directly!
+        navigate(`/optimize/results/${run.id}`);
+      } catch (err) {
+        setCrawlError(err instanceof Error ? err.message : "Failed to run full deep scan.");
+        setDeepScanning(false);
+      }
+    });
   };
 
   const confirmDeleteWebsite = () => {
@@ -200,6 +262,24 @@ export const WebsiteDetailsPage: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleFullDeepScanAndReform}
+            disabled={deepScanning || crawling}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-600 text-xs font-semibold text-white hover:bg-indigo-500 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+            title="Crawl 50+ pages and generate optimized navigation in 1 click"
+          >
+            {deepScanning ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Deep Scanning &amp; Reforming...</span>
+              </>
+            ) : (
+              <>
+                <Zap className="w-3.5 h-3.5 fill-white" />
+                <span>Full Deep Scan</span>
+              </>
+            )}
+          </button>
           {latestCompletedRun && (
             <Link
               to={`/optimize/results/${latestCompletedRun.id}`}
@@ -212,10 +292,10 @@ export const WebsiteDetailsPage: React.FC = () => {
           )}
           <button
             onClick={() => setCrawlModalOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-600 text-xs font-semibold text-white hover:bg-indigo-500 shadow-sm transition-colors"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm transition-colors cursor-pointer"
           >
             <Play className="w-3.5 h-3.5" />
-            Crawl Website
+            Custom Crawl
           </button>
           <Link
             to={`/websites/${website.id}/analysis`}
@@ -449,7 +529,7 @@ export const WebsiteDetailsPage: React.FC = () => {
                 Navigation Reform History
               </h2>
               <p className="text-xs text-slate-500">
-                Saved optimization runs and historical 2-click hierarchy trees for this website.
+                Saved optimization runs and historical hierarchy trees for this website.
               </p>
             </div>
             <Link

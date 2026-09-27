@@ -541,7 +541,7 @@ export const OptimizationPage: React.FC = () => {
                   Recommended
                 </span>
               </div>
-              <p className="text-xs text-slate-500">Thorough search to find optimal 2-click paths.</p>
+              <p className="text-xs text-slate-500">Thorough search to find optimal navigation paths.</p>
             </button>
 
             <button
@@ -805,7 +805,7 @@ export const OptimizationPage: React.FC = () => {
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                Generate 2-Click Navigation
+                Generate Optimized Navigation
               </>
             )}
           </button>

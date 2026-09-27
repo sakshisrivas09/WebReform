@@ -3,7 +3,6 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   Globe,
   Sparkles,
-  ArrowRight,
   RefreshCw,
   ExternalLink,
   Zap,
@@ -24,9 +23,10 @@ export const DashboardPage: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<ApiError | null>(null);
 
-  // 1-Click Quick Reform State
+  // 1-Click Quick & Deep Reform State
   const [quickUrl, setQuickUrl] = useState<string>("");
   const [quickStep, setQuickStep] = useState<"idle" | "registering" | "crawling" | "optimizing">("idle");
+  const [isDeepMode, setIsDeepMode] = useState<boolean>(true);
   const [quickError, setQuickError] = useState<string | null>(null);
 
   const fetchData = async () => {
@@ -54,9 +54,9 @@ export const DashboardPage: React.FC = () => {
     fetchData();
   }, []);
 
-  // 1-Click Quick Reform Handler
-  const handleQuickReform = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // 1-Click Quick & Full Deep Reform Handler
+  const handleReform = async (isDeep: boolean = true, e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     const raw = quickUrl.trim();
     if (!raw) return;
 
@@ -73,81 +73,85 @@ export const DashboardPage: React.FC = () => {
     }
 
     setQuickError(null);
+    setIsDeepMode(isDeep);
 
     requireAccess(async () => {
       setQuickStep("registering");
 
       try {
         // 1. Find existing or register new
-      let site = websites.find(
-        (w) => w.baseUrl.toLowerCase() === targetUrl.toLowerCase() ||
-               w.baseUrl.toLowerCase() === `${targetUrl}/`.toLowerCase()
-      );
+        let site = websites.find(
+          (w) => w.baseUrl.toLowerCase() === targetUrl.toLowerCase() ||
+                 w.baseUrl.toLowerCase() === `${targetUrl}/`.toLowerCase()
+        );
 
-      if (!site) {
-        let domainName = "Target Website";
-        try {
-          domainName = new URL(targetUrl).hostname.replace(/^www\./, "");
-        } catch {
-          // fallback
-        }
-        site = await api.createWebsite({ name: domainName, baseUrl: targetUrl });
-      }
-
-      // 2. Crawl site (focused scan)
-      setQuickStep("crawling");
-      const crawlJob = await api.startCrawl(site.id, { maxPages: 8, maxDepth: 2 });
-      
-      // Poll crawl completion
-      await new Promise<void>((resolve, reject) => {
-        let attempts = 0;
-        const interval = setInterval(async () => {
-          attempts++;
+        if (!site) {
+          let domainName = "Target Website";
           try {
-            const status = await api.getCrawlJob(site!.id, crawlJob.jobId);
-            if (status.status === "COMPLETED") {
-              clearInterval(interval);
-              resolve();
-            } else if (status.status === "FAILED") {
-              clearInterval(interval);
-              reject(new Error(status.errorMessage || "Website crawl failed."));
-            } else if (attempts > 30) {
-              clearInterval(interval);
-              resolve(); // Proceed with what was crawled
-            }
-          } catch (err) {
-            clearInterval(interval);
-            reject(err);
+            domainName = new URL(targetUrl).hostname.replace(/^www\./, "");
+          } catch {
+            // fallback
           }
-        }, 1200);
-      });
+          site = await api.createWebsite({ name: domainName, baseUrl: targetUrl });
+        }
 
-      // 3. Optimize structure
-      setQuickStep("optimizing");
-      const run = await api.runOptimization({
-        websiteId: site.id,
-        populationSize: 30,
-        iterations: 80,
-        randomSeed: 42,
-        maxDepth: 3,
-        maxChildren: 7,
-        weights: {
-          navigation: 0.40,
-          behavior: 0.30,
-          semantic: 0.15,
-          structural: 0.05,
-          depth: 0.10,
-        },
-      });
+        // 2. Crawl site (Deep Scan: 50 pages, Quick Scan: 8 pages)
+        setQuickStep("crawling");
+        const maxPages = isDeep ? 50 : 8;
+        const maxDepth = isDeep ? 3 : 2;
+        const crawlJob = await api.startCrawl(site.id, { maxPages, maxDepth });
+        
+        // Poll crawl completion
+        await new Promise<void>((resolve, reject) => {
+          let attempts = 0;
+          const maxAttempts = isDeep ? 60 : 30;
+          const interval = setInterval(async () => {
+            attempts++;
+            try {
+              const status = await api.getCrawlJob(site!.id, crawlJob.jobId);
+              if (status.status === "COMPLETED") {
+                clearInterval(interval);
+                resolve();
+              } else if (status.status === "FAILED") {
+                clearInterval(interval);
+                reject(new Error(status.errorMessage || "Website crawl failed."));
+              } else if (attempts > maxAttempts) {
+                clearInterval(interval);
+                resolve(); // Proceed with what was crawled
+              }
+            } catch (err) {
+              clearInterval(interval);
+              reject(err);
+            }
+          }, 1200);
+        });
 
-      // Navigate to results
-      navigate(`/optimize/results/${run.id}`);
-    } catch (err) {
-      setQuickError(err instanceof Error ? err.message : "Failed to run website reform.");
-      setQuickStep("idle");
-    }
-  });
-};
+        // 3. Optimize structure
+        setQuickStep("optimizing");
+        const run = await api.runOptimization({
+          websiteId: site.id,
+          populationSize: isDeep ? 40 : 30,
+          iterations: isDeep ? 120 : 80,
+          randomSeed: 42,
+          maxDepth: 3,
+          maxChildren: 7,
+          weights: {
+            navigation: 0.40,
+            behavior: 0.30,
+            semantic: 0.15,
+            structural: 0.05,
+            depth: 0.10,
+          },
+        });
+
+        // Navigate directly to results
+        navigate(`/optimize/results/${run.id}`);
+      } catch (err) {
+        setQuickError(err instanceof Error ? err.message : "Failed to run website reform.");
+        setQuickStep("idle");
+      }
+    });
+  };
 
   const completedRuns = runs.filter((r) => r.status === "COMPLETED");
   const avgGain = completedRuns.length > 0
@@ -161,7 +165,7 @@ export const DashboardPage: React.FC = () => {
 
   return (
     <div className="space-y-10 max-w-6xl mx-auto pb-12">
-      {/* Hero: 1-Click Guided Action */}
+      {/* Hero: 1-Click Guided Action with Full Deep Scan & Quick Scan */}
       <div className="pt-2 pb-6 border-b border-sand-200/90">
         <div className="max-w-2xl space-y-2">
           <h1 className="text-2xl sm:text-3xl font-display font-extrabold tracking-tight text-ink-900">
@@ -173,8 +177,8 @@ export const DashboardPage: React.FC = () => {
         </div>
 
         {/* 1-Click URL Input Bar */}
-        <form onSubmit={handleQuickReform} className="mt-6 max-w-2xl">
-          <div className="flex flex-col sm:flex-row items-stretch gap-2">
+        <form onSubmit={(e) => handleReform(true, e)} className="mt-6 max-w-2xl">
+          <div className="flex flex-col sm:flex-row items-stretch gap-2.5">
             <div className="relative flex-1">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-sand-500">
                 <Globe className="w-4 h-4 text-coral-500" />
@@ -191,36 +195,48 @@ export const DashboardPage: React.FC = () => {
                 className="w-full pl-10 pr-4 py-3 text-sm bg-white border border-sand-300 rounded-2xl focus:border-coral-500 focus:outline-none focus:ring-2 focus:ring-coral-500/10 transition-all shadow-card-sm text-ink-900 font-medium"
               />
             </div>
-            <button
-              type="submit"
-              disabled={quickStep !== "idle" || !quickUrl.trim()}
-              className="px-6 py-3 bg-coral-500 text-white text-sm font-bold rounded-2xl hover:bg-coral-600 shadow-coral-glow disabled:opacity-50 transition-all inline-flex items-center justify-center gap-2 shrink-0 cursor-pointer active:scale-95"
-            >
-              {quickStep === "idle" && (
-                <>
-                  <span>Simplify My Menus</span>
-                  <ArrowRight className="w-4 h-4" />
-                </>
-              )}
-              {quickStep === "registering" && (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Connecting...</span>
-                </>
-              )}
-              {quickStep === "crawling" && (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Scanning Pages...</span>
-                </>
-              )}
-              {quickStep === "optimizing" && (
-                <>
-                  <Sparkles className="w-4 h-4 animate-spin" />
-                  <span>Reorganizing Structure...</span>
-                </>
-              )}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={(e) => handleReform(false, e)}
+                disabled={quickStep !== "idle" || !quickUrl.trim()}
+                className="px-4 py-3 bg-white hover:bg-sand-50 text-ink-700 border border-sand-300 text-xs sm:text-sm font-semibold rounded-2xl disabled:opacity-50 transition-all cursor-pointer shrink-0"
+                title="Fast 5-second scan of top 8 pages"
+              >
+                Quick Scan
+              </button>
+              <button
+                type="submit"
+                disabled={quickStep !== "idle" || !quickUrl.trim()}
+                className="px-5 py-3 bg-coral-500 text-white text-xs sm:text-sm font-bold rounded-2xl hover:bg-coral-600 shadow-coral-glow disabled:opacity-50 transition-all inline-flex items-center justify-center gap-1.5 shrink-0 cursor-pointer active:scale-95"
+                title="Discovers up to 50 pages and reorganizes full menu"
+              >
+                {quickStep === "idle" && (
+                  <>
+                    <Zap className="w-4 h-4 fill-white" />
+                    <span>Full Deep Scan</span>
+                  </>
+                )}
+                {quickStep === "registering" && (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Connecting...</span>
+                  </>
+                )}
+                {quickStep === "crawling" && (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>{isDeepMode ? "Deep Scanning..." : "Scanning..."}</span>
+                  </>
+                )}
+                {quickStep === "optimizing" && (
+                  <>
+                    <Sparkles className="w-4 h-4 animate-spin" />
+                    <span>Reforming...</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {quickError && (
@@ -231,12 +247,12 @@ export const DashboardPage: React.FC = () => {
           )}
 
           {quickStep !== "idle" && (
-            <div className="mt-3 p-3 bg-sand-100 border border-sand-200 rounded-xl text-xs text-ink-800 flex items-center gap-3 font-mono">
+            <div className="mt-3 p-3.5 bg-sand-100 border border-sand-200 rounded-xl text-xs text-ink-800 flex items-center gap-3 font-mono">
               <Sparkles className="w-4 h-4 text-coral-500 animate-pulse shrink-0" />
               <span>
-                {quickStep === "registering" && "Checking website domain and accessibility..."}
-                {quickStep === "crawling" && "Discovering menu links and measuring click depths..."}
-                {quickStep === "optimizing" && "Searching thousands of layouts to find the optimal navigation hierarchy..."}
+                {quickStep === "registering" && "Connecting to website and checking availability..."}
+                {quickStep === "crawling" && (isDeepMode ? "Deep scanning website: discovering up to 50 pages and link connections..." : "Quick scanning top pages...")}
+                {quickStep === "optimizing" && "Evaluating alternative navigation layouts to minimize friction..."}
               </span>
             </div>
           )}
@@ -252,36 +268,53 @@ export const DashboardPage: React.FC = () => {
         />
       )}
 
-      {/* Human Metrics Bar (Clean, Unboxed) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-6 py-2">
-        <div>
-          <span className="text-xs font-mono font-semibold uppercase text-ink-400 block mb-1">Websites Monitored</span>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-display font-extrabold text-ink-900">{websites.length}</span>
-            <span className="text-xs text-ink-400">domains</span>
+      {/* Balanced, Clean Metric Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 py-2">
+        <div className="bg-white rounded-2xl border border-sand-200/90 p-4 sm:p-5 shadow-card-sm flex flex-col justify-between">
+          <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-ink-400 block mb-2">
+            Websites Monitored
+          </span>
+          <div>
+            <div className="text-2xl sm:text-3xl font-display font-extrabold text-ink-900">
+              {websites.length}
+            </div>
+            <p className="text-xs text-ink-500 font-medium mt-1">Active domains</p>
           </div>
         </div>
-        <div>
-          <span className="text-xs font-mono font-semibold uppercase text-ink-400 block mb-1">Navigation Target</span>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-display font-extrabold text-mint-600">Optimized</span>
-            <span className="text-xs text-ink-400">streamlined paths</span>
+
+        <div className="bg-white rounded-2xl border border-sand-200/90 p-4 sm:p-5 shadow-card-sm flex flex-col justify-between">
+          <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-ink-400 block mb-2">
+            Navigation Target
+          </span>
+          <div>
+            <div className="text-2xl sm:text-3xl font-display font-extrabold text-mint-600">
+              Streamlined
+            </div>
+            <p className="text-xs text-ink-500 font-medium mt-1">Flattened hierarchy</p>
           </div>
         </div>
-        <div>
-          <span className="text-xs font-mono font-semibold uppercase text-ink-400 block mb-1">Avg. Friction Reduced</span>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-display font-extrabold text-coral-600">
+
+        <div className="bg-white rounded-2xl border border-sand-200/90 p-4 sm:p-5 shadow-card-sm flex flex-col justify-between">
+          <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-ink-400 block mb-2">
+            Avg. Friction Reduced
+          </span>
+          <div>
+            <div className="text-2xl sm:text-3xl font-display font-extrabold text-mint-600">
               {completedRuns.length > 0 ? `+${avgGain}%` : "—"}
-            </span>
-            <span className="text-xs text-ink-400">faster access</span>
+            </div>
+            <p className="text-xs text-ink-500 font-medium mt-1">Faster visitor paths</p>
           </div>
         </div>
-        <div>
-          <span className="text-xs font-mono font-semibold uppercase text-ink-400 block mb-1">Reforms Completed</span>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-display font-extrabold text-ink-900">{completedRuns.length}</span>
-            <span className="text-xs text-ink-400">layouts generated</span>
+
+        <div className="bg-white rounded-2xl border border-sand-200/90 p-4 sm:p-5 shadow-card-sm flex flex-col justify-between">
+          <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-ink-400 block mb-2">
+            Reforms Completed
+          </span>
+          <div>
+            <div className="text-2xl sm:text-3xl font-display font-extrabold text-ink-900">
+              {completedRuns.length}
+            </div>
+            <p className="text-xs text-ink-500 font-medium mt-1">Optimized layouts</p>
           </div>
         </div>
       </div>

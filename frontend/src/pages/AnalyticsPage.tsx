@@ -227,7 +227,7 @@ export const AnalyticsPage: React.FC = () => {
                   Fitness Function Convergence Across Completed Runs
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Friction metric minimization curve (lower score signifies better 2-click accessibility and coherent structure).
+                  Friction metric minimization curve (lower score signifies faster path accessibility and coherent structure).
                 </p>
               </div>
               <span className="text-xs font-mono text-slate-400">

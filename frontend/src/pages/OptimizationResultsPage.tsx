@@ -247,7 +247,7 @@ export const OptimizationResultsPage: React.FC = () => {
             </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
-            Recommended 2-Click Menu Structure
+            Recommended Menu Structure
           </h1>
           <p className="text-sm text-slate-600">
             Pages have been brought closer to the homepage. Visitors can now find any page in {optMaxDepth} clicks (down from {origMaxDepth} clicks).
